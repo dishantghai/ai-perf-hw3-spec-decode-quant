@@ -640,6 +640,83 @@ parallel-execution noise mixed in.
 and the Chapter 6/7/8 analysis (acceptance-rate paradox, ordering question,
 evidence synthesis).**
 
+## §5.5 Interpretation — Question A & Question B
+
+Worked through using our own measured numbers (not the reference run's),
+matching the worked code now in `ch5-acceptance-analysis` and the new
+`ch5-additive-multiplicative` cell in the notebook.
+
+### Question A — Why does spec decoding help even though acceptance *rate* looks low?
+
+Our C2 (N=2): 14,542 draft cycles, 29,084 draft tokens, 5,889 accepted tokens,
+per-token acceptance rate **20.25%**.
+
+```
+mean tokens per verify cycle = (accepted + drafts) / drafts
+                              = (5,889 + 14,542) / 14,542
+                              ≈ 1.40   ← matches measured acceptance_length exactly
+```
+
+The verifier ran 14,542 forward passes whether or not speculation was on.
+Without it, that's 14,542 tokens. With it, it's ~1.40× that — about 20,359
+tokens — for essentially the same number of expensive (memory-bandwidth-bound)
+verifier passes, plus a cheap draft-head pass each cycle. The 20.25%
+**acceptance rate** is a per-draft-token-attempt average and undersells what's
+happening; **acceptance length** (1.40) is the number that actually predicts
+throughput, and it does so almost completely: 1.40× more tokens per pass
+roughly tracks the +27.5% measured throughput gain (not exactly 1:1, because
+the draft head's own compute and scheduling overhead eat into the theoretical
+ceiling — but the direction and rough magnitude both check out).
+
+**Answer: acceptance rate measures how often a single guess is right.
+Acceptance length measures how many usable tokens come out of one expensive
+verifier pass — and the second number is what determines throughput, because
+the verifier pass (not the draft head) is the bottleneck cost being amortized.**
+
+### Question B — Do FP8 and spec decoding's gains just add up?
+
+```
+gain_C2 (spec alone)  = 1069.82 / 838.74 - 1  = +27.55%
+gain_C3 (FP8 alone)   = 1110.97 / 838.74 - 1  = +32.46%
+
+additive prediction       = 838.74 × (1 + 0.2755 + 0.3246)        = 1342.05 tok/s
+multiplicative prediction = 838.74 × (1069.82/838.74) × (1110.97/838.74) = 1417.05 tok/s
+actual C4                                                          = 1468.70 tok/s
+
+actual vs additive:       +9.4%
+actual vs multiplicative: +3.6%
+```
+
+**Answer: neither prediction is right — C4 beats both.** The combination is
+slightly *super*-multiplicative, and this is a real, mechanistic effect, not
+noise (it's 36x larger than the ~0.1% noise band established by the C1
+reproduction check at the start of this session).
+
+**Why:** confirmed directly by inspecting the EAGLE-3 checkpoint
+(`/data/hw3/output/checkpoints/checkpoint_best/model.safetensors`) — its
+weights are `torch.bfloat16`, unchanged by Chapter 4's quantization, which
+only targeted the 8B verifier's `Linear` layers (`ignore=["lm_head"]`). So:
+
+- The draft head's compute cost is **fixed and identical** in C2 and C4.
+- FP8 shrinks only the **verifier's** forward pass — the exact cost that
+  EAGLE-3 is busy amortizing over multiple accepted tokens per cycle.
+- Shrinking the cost you're already amortizing makes the amortization more
+  efficient per unit of fixed draft-head overhead — the two techniques are
+  optimizing the *same* bottleneck from two different angles, not two
+  independent bottlenecks, so their effects compound rather than simply add
+  or multiply as if unrelated.
+- This is the mirror image of the C4 sweep finding (FP8 makes *wasted* draft
+  overhead cost relatively more past the optimum) — same root cause (FP8
+  changes the relative weight of fixed draft-head cost vs. the verifier
+  cost), opposite sign depending on whether the marginal draft token is
+  typically accepted (N=2, here) or rejected (N≥3, the sweep).
+
+**Implication for Chapter 8:** "should you combine FP8 and spec decoding" has
+an unambiguous answer from this data — yes, and not just because the gains
+don't cancel each other out, but because they reinforce. This is a stronger
+claim than "they're compatible" and is worth stating explicitly in the final
+evidence synthesis.
+
 ---
 
 ## Baseline — 2026-06-30 (prior session, kept for reference)
