@@ -717,6 +717,113 @@ don't cancel each other out, but because they reinforce. This is a stronger
 claim than "they're compatible" and is worth stating explicitly in the final
 evidence synthesis.
 
+## Chapter 6 — The Interaction Problem
+
+### Finding 1: the reference's "acceptance rate paradox" does not exist in our data
+
+**Why we checked this:** the guide poses a puzzle — the reference run shows
+C4 (FP8+spec) with a *higher* acceptance rate than C2 (BF16+spec) but a
+*lower* acceptance length, which looks contradictory. Before accepting the
+guide's resolution at face value, we checked whether the same pattern shows
+up in our own numbers.
+
+**What we found:** the reference compares C2 at N=2 against C4 at N=1 —
+different draft depths. We tuned both configs to their own real optimum via
+the Chapter 5 sweep, and **both landed on N=2**. Comparing at matched N:
+
+| Config | Acceptance rate | Acceptance length |
+|---|---|---|
+| C2 (BF16 + spec, N=2) | 20.25% | 1.40 |
+| C4 (FP8 + spec, N=2) | 20.17% | 1.40 |
+| **Delta** | **-0.08 pp** | **+0.00** |
+
+**Both metrics are statistically indistinguishable.** The reference's
+"paradox" is fully explained by the N=2-vs-N=1 confound, not by any real
+effect of quantization on the draft head's acceptance behavior. This is a
+genuine, useful finding: it means the deeper question worth asking isn't
+"why does the paradox happen" (it doesn't, once you control for draft
+depth) but "does FP8 change the verifier's output distribution at all, and
+if so, does that show up anywhere" — which is what the bonus experiment
+tests directly.
+
+### Finding 2: BF16 vs FP8 logit comparison (real experiment, not hypothetical)
+
+**Why we ran this:** the guide's `ch6-dist-check` cell was written as a
+"copy this and run it yourself" snippet, and it had the same path bug we
+already fixed in `ch4-quant-code` — it referenced the Hugging Face Hub id
+(`Qwen/Qwen3-8B`, would trigger a redundant re-download) and a relative path
+for the FP8 model. Fixed both to the local absolute paths and actually ran
+it on this instance (`comp_venv`, real H100), rather than leaving it as a
+hypothetical for later. This is the first genuinely new experiment in
+Chapter 6 — everything in Finding 1 was re-analysis of numbers we already
+had; this one required running fresh inference on both models.
+
+**Command:** `comp_venv` python script loading `/data/hw3/Qwen3-8B` (BF16)
+and `/data/hw3/Qwen3-8B-FP8-Dynamic` (FP8) sequentially, computing next-token
+logits on 3 prompts, one model at a time (loaded, measured, freed via
+`del model; torch.cuda.empty_cache()` before loading the next — same
+no-overlap discipline as the Chapter 5 benchmarks, verified `nvidia-smi`
+shows 0 MiB both before the run and after it exits).
+
+**Raw result:**
+```
+Prompt: 'The capital of France is'
+  BF16: top1_prob=0.5188  entropy=2.6279  top3=[('Paris', '0.5188'), ('a', '0.1158'), ('in', '0.0426')]
+  FP8:  top1_prob=0.5787  entropy=2.4213  top3=[('Paris', '0.5787'), ('a', '0.1006'), ('located', '0.0288')]
+
+Prompt: 'def fibonacci(n):'
+  BF16: top1_prob=0.9703  entropy=0.1933  top3=[('', '0.9703'), ('#', '0.0095'), ('', '0.0084')]
+  FP8:  top1_prob=0.9651  entropy=0.2205  top3=[('', '0.9651'), ('#', '0.0121'), ('', '0.0095')]
+
+Prompt: 'In 2024, the most popular programming language was'
+  BF16: top1_prob=0.5532  entropy=2.6550  top3=[('Python', '0.5532'), ('JavaScript', '0.0661'), ('determined', '0.0515')]
+  FP8:  top1_prob=0.5293  entropy=2.8024  top3=[('Python', '0.5293'), ('determined', '0.0716'), ('JavaScript', '0.0492')]
+
+Top-1 token agreement: France=SAME  fibonacci=SAME  programming=SAME (all 3/3)
+```
+
+**Observations:**
+- **H1 ("FP8 uniformly sharpens the distribution") is NOT well supported —
+  and the initial mean-based read of this data was misleading.** Only the
+  France prompt got sharper under FP8 (top1_prob +0.06, entropy -0.21). The
+  other two prompts got *less* sharp (fibonacci: top1_prob -0.005, entropy
+  +0.027; programming language: top1_prob -0.024, entropy +0.15). Averaging
+  across all three prompts gives a small net-positive shift (+0.0103 top1,
+  -0.0107 entropy) that looks like it supports "FP8 sharpens," but that
+  average is dominated by France's larger swing — 2 of 3 individual prompts
+  actually move the *opposite* direction. Caught this by checking
+  prompt-by-prompt before trusting the aggregate; worth flagging as a
+  reminder that small-n averages can suggest a systematic effect that isn't
+  actually there.
+- **Every prompt's top-1 token is identical between BF16 and FP8** (Paris,
+  newline, Python — 3/3 agreement). Whatever shift quantization causes in
+  the probability distribution, it isn't large enough to flip the actual
+  prediction on any of these prompts.
+- **H3 ("FP8 weights approximate BF16 well enough that hidden states differ
+  minimally") is the best-supported hypothesis.** The probability/entropy
+  differences are real (not zero) but small (roughly 1-15% relative) and
+  inconsistent in direction across prompts — the signature of quantization
+  noise fluctuating around a stable prediction, not a systematic
+  distributional shift in either direction.
+- **This directly explains Finding 1.** If FP8 doesn't measurably change
+  which token the verifier prefers, it shouldn't measurably change whether
+  the (BF16-trained) draft head's guesses get accepted either — consistent
+  with C2 and C4 landing on nearly identical acceptance rate and length once
+  draft depth is held constant.
+- Sample size caveat: n=3 prompts is small, matching what the guide itself
+  set up as a "bonus, optional" quick check, not a rigorous study. The
+  *direction* being inconsistent across even 3 prompts is itself informative
+  (real systematic effects should show up more consistently even at small n),
+  but a stronger claim would need a larger, more diverse prompt set.
+
+**Chapter 6 conclusion: quantization does not break speculative decoding for
+this draft head, and the reason isn't subtle — FP8 barely moves the
+verifier's output distribution in the first place.** The reference's
+"paradox" evaporates once draft depth is controlled for, and the logit-level
+check confirms why: the underlying distributions are close enough that
+neither the draft head's acceptance behavior nor the model's actual
+predictions are meaningfully affected.
+
 ---
 
 ## Baseline — 2026-06-30 (prior session, kept for reference)
