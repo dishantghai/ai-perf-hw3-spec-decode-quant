@@ -1094,6 +1094,41 @@ order-of-operations question.
 
 ---
 
+## Chapter 9 — Filled the Real Submission Notebook
+
+Filled `spec_dec+quantization_homework.ipynb` (the actual homework
+submission file, not the GUIDE) directly, grounding every answer in this
+runlog's real captured data rather than the reference numbers baked into
+the template. No new experiments — pure transcription + synthesis of
+what's already documented above.
+
+**What was added (10 original cells → 16 cells):**
+- Answer cells after Task 1-4 markdown blocks, each citing our own measured
+  numbers (130.4 GB hidden states, our own epoch-5 training metrics, our
+  own quantization + acceptance-rate findings, our own final benchmark +
+  sweep tables) rather than restating the template's reference numbers.
+- Replaced all three `TODO` benchmark-result blocks with the real raw
+  `vllm bench serve` output for C2 (N=2), C3, and C4 (N=2) — copied
+  verbatim from `/data/hw3/logs/c2_n2_bench.log`, `c3_bench.log`,
+  `c4_n2_bench.log`.
+- Added the draft-token tuning note after the spec-decoding results cell,
+  and the full tuning table + justification after the combined results
+  cell, per the assignment's own "Final Report Requirements."
+- Converted the empty trailing code cell into the Central Question answer,
+  written from our real Chapter 7 Experiment 7.1 result (not the
+  theoretical assumption) and the real super-multiplicative combined-gain
+  finding from Chapter 8.
+
+**Honest scoring note, stated plainly in both Task 4's answer and the
+combined-tuning cell, not just here:** none of the three scored
+configurations clear their thresholds (Spec decoding `1069.82 < 1250`; FP8
+`1110.97 < 1550`; Combined `1468.70 < 1750`) — current score **0/50** —
+despite our own baseline (838.74) closely tracking the reference baseline
+(841.22) and our relative gains being strong (combined +75.1%). This is the
+open item flagged to tackle next, immediately after this chapter.
+
+---
+
 ## Baseline — 2026-06-30 (prior session, kept for reference)
 
 **Model:** `/data/hw3/Qwen3-8B`  
