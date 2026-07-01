@@ -1129,6 +1129,84 @@ open item flagged to tackle next, immediately after this chapter.
 
 ---
 
+## Rubric Gap Investigation
+
+Full hypothesis list and reasoning: `RUBRIC_GAP_HYPOTHESES.md`. This section
+is the condensed, dated record of what was actually tested and found — the
+hypotheses document has the "why we suspected this" detail, this has the
+"what we ran and what happened."
+
+**Framing:** baseline matched the reference almost exactly (-0.3%), but every
+FP8-touching config fell increasingly short (Spec -15.0%, FP8 -29.1%,
+Combined -16.9%) — ruled out generic "our environment is slower" explanations
+from the start, since those would have dragged baseline down too.
+
+### H1 — Cold compile/kernel-cache tax (dominant finding)
+
+Found a persistent, disk-cached compiled-kernel directory
+(`~/.cache/vllm/torch_compile_cache/`) keyed per distinct serving
+configuration. The cache directory for "FP8 verifier, no speculative
+decoding" has a filesystem timestamp landing exactly inside our original C3
+benchmark window (23:35:13, benchmark ran 23:34:57-23:36:20) — that run was
+the first time this environment had ever served that exact config, and the
+one-time compile cost ate into an 18-second measurement window.
+
+Re-tested every config against an already-warm server (discarding a first
+"cold" run where relevant, keeping the stable warm reading):
+
+| Config | Official (cold) | Warm re-test(s) | vs. threshold |
+|---|---:|---:|---:|
+| FP8 alone | 1110.97 | 1598.79, 1611.94 (mean 1605.37, **+44.5%**) | **PASSES** 1550 |
+| Spec Decoding alone | 1069.82 | 1162.80, 1148.89, 1192.77 (mean 1168.15, +9.2%) | still -6.5% short of 1250 |
+| Combined | 1468.70 | 1465.66, 1458.63, 1448.81 (mean ~1457.70, ~flat) | still -16.7% short of 1750 |
+
+Why C2/C4's *official* numbers were less affected than C3's: both had already
+been served once earlier in their own draft-token sweeps (N=1 ran before the
+official N=2), so the relevant cache was already warm by the time the
+official number was recorded. C3 was benchmarked standalone with no prior
+warm-up run — the full cold-compile cost landed directly in its one official
+measurement. C2 still shows a smaller, real +9.2% warm-up gain on top of
+that — some shape-specific compilation apparently still happens
+progressively as concurrency ramps even in an already-mostly-warm config.
+
+**This alone flips FP8 Quant from FAIL to PASS (+10 points)** if a real
+submission includes one throwaway warm-up run before recording results.
+
+### H4 — Thermal/session drift: ruled out
+
+GPU idle at 29°C, no throttle reasons active (`clocks_event_reasons.active`
+only the benign "Idle" bit). Decisive evidence: C4's warm re-test, run very
+late in an already many-hours-long session, matched its original measurement
+almost exactly rather than degrading — the opposite of what accumulating
+thermal throttling would predict.
+
+### H5 — `--kv-cache-dtype fp8`: ruled out as primary cause
+
+Warm result 1482.09 tok/s, only ~+1% over the standard warm C4 baseline —
+real but far too small to close a 16.7% gap. (The *first* run with this new
+flag combination independently reproduced H1's cold-compile signature —
+TTFT 778ms mean vs the warm run's 25ms — confirming the mechanism
+generalizes to any new flag combination, not just new models.)
+
+### H6 — `--no-enable-chunked-prefill`: ruled out
+
+Warm result 1425.00 tok/s, marginally *worse* than standard. Default chunked
+prefill is already the better setting here.
+
+### Where this leaves us
+
+H1 fully explains the FP8-alone gap (now passes) and roughly half of the
+apparent spec-decoding gap. A real, stable, *residual* gap remains once
+everything is warm: **Spec Decoding -6.5% short, Combined -16.7% short.**
+H5/H6 (the cheap, config-flag-level hypotheses) don't close it. Next step is
+H2 (FP8 kernel tuned for large-batch prefill rather than the small-batch
+decode regime this benchmark lives in) — though that alone can't be the
+whole story since Spec Decoding alone (no FP8 involved) also falls short;
+the remaining gap likely needs a broader look at speculative-decoding
+scheduling overhead specifically, not just FP8 kernel selection.
+
+---
+
 ## Baseline — 2026-06-30 (prior session, kept for reference)
 
 **Model:** `/data/hw3/Qwen3-8B`  

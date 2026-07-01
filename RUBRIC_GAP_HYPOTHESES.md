@@ -1,5 +1,14 @@
 # Why We're Missing the Scoring Rubric — Hypothesis Log
 
+> **UPDATE — H1 confirmed as the dominant cause, investigation results at the bottom
+> of this file.** Short version: our official numbers included a one-time,
+> per-config compile/kernel-cache cost that a short (~14-22s) benchmark window can't
+> amortize away. Re-testing against a warm cache: **FP8 alone now clears its
+> threshold** (1605 vs 1550 needed), **Spec Decoding alone gets much closer but still
+> falls short** (1168 vs 1250, -6.5%), and **Combined still falls meaningfully short**
+> (1458 vs 1750, -16.7%) even fully warm — so a real, second gap remains for Spec
+> Decoding and Combined that H1 alone doesn't explain. Full results below.
+
 **The problem, precisely stated:** our baseline throughput matches the reference run
 almost exactly, but every config that touches FP8 falls increasingly short as FP8
 becomes more central to the config:
@@ -214,4 +223,74 @@ required benchmark protocol (which we should not do).
    understanding *why* a gap could exist even with a fully correct setup, but not
    independently actionable without changing the required benchmark protocol.
 
-Not testing yet — waiting for direction on which hypotheses to pursue.
+---
+
+## Investigation Results
+
+Full raw command output and per-run detail: `runlog.md` ("Rubric Gap Investigation"
+section). This section is the verdict summary.
+
+### H1 — Cold-start / kernel-autotuning tax: **CONFIRMED, dominant cause**
+
+Root cause pinned down exactly: `~/.cache/vllm/torch_compile_cache/` holds a
+persistent, disk-cached compiled-kernel directory *per distinct serving
+configuration* (model + quantization + speculative-decoding-or-not). The cache
+directory for "FP8 verifier, no speculative decoding" was created with a timestamp
+that lines up exactly with our original C3 benchmark window — that run was the
+first time this environment had ever served that exact configuration, and it paid
+a one-time compile cost inside an 18-second measurement window.
+
+| Config | Official (cold) | Warm re-test(s) | Verdict vs threshold |
+|---|---:|---:|---:|
+| FP8 alone (C3) | 1110.97 | 1598.79, 1611.94 (mean 1605.37, **+44.5%**) | **PASS** (>1550) |
+| Spec Decoding alone (C2, N=2) | 1069.82 | 1162.80, 1148.89, 1192.77 (mean 1168.15, +9.2%) | FAIL, -6.5% short of 1250 |
+| Combined (C4, N=2) | 1468.70 | 1465.66, 1458.63, 1448.81 (mean ~1457.70, ~flat) | FAIL, -16.7% short of 1750 |
+
+Confirmed *why* C2 and C4 weren't affected the same way C3 was: both configs had
+already been exercised once earlier in their own draft-token sweeps (N=1 ran before
+N=2, in the same session), so by the time their *official* N=2 numbers were
+recorded, the relevant compile cache was already warm. C3 had no such prior run —
+it was benchmarked standalone. C2 still shows a real, smaller (+9.2%) warm-up gain
+on top of that, suggesting some additional shape/path-specific compilation still
+happens progressively as concurrency ramps even within an already-mostly-warm
+config — smaller effect, same underlying mechanism.
+
+**Practical implication:** for a real submission, run one throwaway warm-up
+benchmark per configuration before recording the "official" one. This alone flips
+FP8 Quant from FAIL to PASS (+10 points).
+
+### H4 — Thermal/session drift: **RULED OUT**
+
+GPU idle temp 29°C, no throttle reasons active. Decisive evidence: C4's warm
+re-test (run very late in an already many-hours-long session) matched its original
+measurement almost exactly rather than degrading — the opposite of what
+accumulating thermal throttling would predict.
+
+### H5 — KV cache FP8 dtype (`--kv-cache-dtype fp8`): **RULED OUT as primary cause**
+
+Warm result: 1482.09 tok/s, only ~+1% over the standard warm C4 baseline
+(1457.70). Real but small effect, nowhere near enough to close the 16.7% gap. Note:
+the *first* run with this new flag combination independently showed the same
+cold-compile signature as H1 (TTFT 778ms) — confirms H1's mechanism generalizes to
+any new flag combination, not just new models/speculative configs.
+
+### H6 — Chunked prefill interaction (`--no-enable-chunked-prefill`): **RULED OUT**
+
+Warm result: 1425.00 tok/s, marginally *worse* than the standard warm C4 baseline.
+No benefit; default (`enable_chunked_prefill=True`) is already the better setting
+for this workload.
+
+### Remaining, unexplained gap
+
+Even at a fully warm, stable state (5 consistent measurements for C4 clustered
+1448-1482, 3 consistent measurements for C2 clustered 1149-1193), **Spec Decoding
+alone is short by 6.5% and Combined is short by 16.7%** against the assignment's
+thresholds. H1/H4/H5/H6 collectively explain the *entire* FP8-alone gap and roughly
+half of the apparent spec-decoding/combined gap (the portion caused by the original
+numbers being cold), but a real residual gap remains for any config involving
+speculative decoding specifically. H2 (FP8 kernel tuned for prefill, not the
+small-batch decode regime this benchmark lives in) remains the most likely
+explanation for what's left, but note it wouldn't explain a *spec-decoding-specific*
+shortfall on its own (C2 has no FP8 involved at all) — worth broadening the
+hypothesis set for the remaining gap specifically around speculative-decoding
+scheduling overhead, not just FP8 kernel selection, before continuing further.
