@@ -1,13 +1,16 @@
 # Why We're Missing the Scoring Rubric — Hypothesis Log
 
-> **UPDATE — H1 confirmed as the dominant cause, investigation results at the bottom
-> of this file.** Short version: our official numbers included a one-time,
-> per-config compile/kernel-cache cost that a short (~14-22s) benchmark window can't
-> amortize away. Re-testing against a warm cache: **FP8 alone now clears its
-> threshold** (1605 vs 1550 needed), **Spec Decoding alone gets much closer but still
-> falls short** (1168 vs 1250, -6.5%), and **Combined still falls meaningfully short**
-> (1458 vs 1750, -16.7%) even fully warm — so a real, second gap remains for Spec
-> Decoding and Combined that H1 alone doesn't explain. Full results below.
+> **UPDATE 2 — H9 (uncompressed draft-head vocab) confirmed as a second major
+> cause, on top of H1. Combined effect: projected score 0/50 -> 35/50.**
+> Short version: (1) our official numbers included a one-time, per-config
+> compile/kernel-cache cost a short benchmark window can't amortize away (H1),
+> and (2) our draft head was accidentally trained with the full 151,936-token
+> vocabulary instead of a compressed one, making 82% of its parameters just
+> vocab embedding/projection layers instead of the actual small "drafting"
+> computation. Fixing both: **FP8 alone PASSES** (1605 vs 1550), **Spec
+> Decoding alone PASSES** (1279 vs 1250, using the compressed-vocab draft
+> head), **Combined still falls short** (1651 vs 1750, -5.7%, down from the
+> original -16.9%). Full results at the bottom of this file.
 
 **The problem, precisely stated:** our baseline throughput matches the reference run
 almost exactly, but every config that touches FP8 falls increasingly short as FP8
@@ -294,3 +297,69 @@ explanation for what's left, but note it wouldn't explain a *spec-decoding-speci
 shortfall on its own (C2 has no FP8 involved at all) — worth broadening the
 hypothesis set for the remaining gap specifically around speculative-decoding
 scheduling overhead, not just FP8 kernel selection, before continuing further.
+
+---
+
+## H9 — Draft head using the full 151,936-token vocab instead of a compressed one (CONFIRMED, second major cause)
+
+**The idea:** every training run so far logged the warning "No vocab mappings
+found... using full verifier vocab" — meaning `--draft-vocab-size` was never
+passed to `train.py`. Checked the actual checkpoint: **82.3% of the draft
+head's 1.51B parameters are just the `embed_tokens`/`lm_head` vocab
+projection layers** (1.24B params), not the actual small transformer doing
+the "drafting" work (~268M params). This is exactly the kind of thing that
+would only hurt configs that *use* the draft head (Spec Decoding, Combined)
+and leave baseline/FP8-alone (which never touch it) completely unaffected —
+matching the pattern we'd already established. Chapter 10 of the GUIDE
+documents compressing this to a 32k draft vocab as a known optimization; it
+was never applied to the actual submission draft head.
+
+**Test:** retrained a second draft head with `--draft-vocab-size 32000`,
+reusing the *existing* hidden states (no need to regenerate — same
+tokenizer, same data either way) — `token_freq.pt` already existed from the
+original run, train.py used it to auto-generate the `d2t.npy`/`t2d.npy`
+draft-vocab mapping files. Confirmed in the resulting checkpoint:
+`lm_head.weight` shrank from `(151936, 4096)` to `(32000, 4096)` — 622M to
+131M params, ~32% smaller draft head overall (`embed_tokens` stays full-size
+by design, since it must be able to embed any input token, not just predict
+from a restricted set).
+
+Training completed cleanly in ~13 minutes, and the compressed-vocab draft
+head actually trained to a *lower* validation loss than the original
+(`11.716` vs `11.984` — not directly comparable across different vocab
+sizes, but at minimum shows no quality regression). Benchmarked against
+both BF16 and FP8 verifiers, N=2:
+
+| Config | Full-vocab warm (baseline for comparison) | Compressed-vocab warm | Gain | vs. threshold |
+|---|---:|---:|---:|---:|
+| Spec Decoding alone | 1168.15 | **1279.46** | **+9.5%** | **PASSES** 1250 |
+| Combined | ~1457.70 | **1650.94** (mean of 1635.39, 1666.49) | **+13.3%** | still -5.7% short of 1750 |
+
+Acceptance rate/length were essentially unchanged in both cases (Spec:
+19.75-20.04% / 1.39-1.40 vs the original 20.25%/1.40; Combined: 19.64-19.97%
+/ 1.39-1.40 vs the original 20.17%/1.40) — confirming the throughput gain is
+pure compute savings from the smaller output projection, not a change in
+prediction quality or a benchmarking artifact.
+
+**Also tested N=3 with the compressed-vocab draft head on Combined** (in
+case the cheaper per-position cost shifted the optimal draft depth): 1602.87
+tok/s warm, still worse than N=2's ~1650.94. N=2 remains optimal —
+position-2 acceptance is still too low (~1%) to justify the extra draft
+cost even with a cheaper draft head.
+
+### Updated scoring status (H1 + H9 combined)
+
+| Config | Threshold | Best warm result | Verdict |
+|---|---:|---:|---|
+| Spec Decoding alone | >1250 | 1279.46 (compressed vocab) | **PASS (+25)** |
+| FP8 Quant alone | >1550 | 1605.37 (H1 warm-up only) | **PASS (+10)** |
+| Combined | >1750 | 1650.94 (H1 + H9 combined) | FAIL, -5.7% short |
+
+**Projected score: 35/50, up from the original 0/50.** Combined remains the
+only unsolved piece, and the gap has narrowed from -16.9% (original,
+cold, full-vocab) to -5.7% (warm, compressed-vocab, optimal N) — a real,
+much smaller residual gap. Not yet root-caused further; candidates for a
+next round include stacking H5 (kv-cache-dtype fp8, gave +1% on its own)
+on top of the compressed-vocab draft head, or genuine H2-style FP8 kernel
+research, since what's left is small enough that a few more percent from
+any one lever could close it.
