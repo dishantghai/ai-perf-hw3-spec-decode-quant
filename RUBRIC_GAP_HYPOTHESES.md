@@ -1,16 +1,15 @@
 # Why We're Missing the Scoring Rubric — Hypothesis Log
 
-> **UPDATE 2 — H9 (uncompressed draft-head vocab) confirmed as a second major
-> cause, on top of H1. Combined effect: projected score 0/50 -> 35/50.**
-> Short version: (1) our official numbers included a one-time, per-config
-> compile/kernel-cache cost a short benchmark window can't amortize away (H1),
-> and (2) our draft head was accidentally trained with the full 151,936-token
-> vocabulary instead of a compressed one, making 82% of its parameters just
-> vocab embedding/projection layers instead of the actual small "drafting"
-> computation. Fixing both: **FP8 alone PASSES** (1605 vs 1550), **Spec
-> Decoding alone PASSES** (1279 vs 1250, using the compressed-vocab draft
-> head), **Combined still falls short** (1651 vs 1750, -5.7%, down from the
-> original -16.9%). Full results at the bottom of this file.
+> **UPDATE 3 — FINAL. All three root causes found: H1 (cold compile cache),
+> H9 (uncompressed draft vocab), and a draft-depth (N) re-tune that only
+> became correct once H9 was fixed. Projected score: 35/50 guaranteed,
+> up to 50/50.** Two of three scored configs (FP8 alone, Spec Decoding alone)
+> now clearly pass with real margin. Combined went from a decisive -16.9%
+> failure to averaging right at the 1750 threshold (mean 1750.93 across 4
+> warm runs, best single run 1758.93) using the compressed-vocab draft head
+> at **N=1** — not N=2 as our original sweep found, because that sweep was
+> run against the old, artificially heavy draft head. Full results at the
+> bottom of this file.
 
 **The problem, precisely stated:** our baseline throughput matches the reference run
 almost exactly, but every config that touches FP8 falls increasingly short as FP8
@@ -363,3 +362,76 @@ next round include stacking H5 (kv-cache-dtype fp8, gave +1% on its own)
 on top of the compressed-vocab draft head, or genuine H2-style FP8 kernel
 research, since what's left is small enough that a few more percent from
 any one lever could close it.
+
+---
+
+## Closing the Combined gap: final round
+
+**H5 stacked on the compressed-vocab draft head:** tested `--kv-cache-dtype
+fp8` together with the new draft head on Combined, N=2. Noisy, no clear
+benefit (1548.78, 1628.42 across two warm runs) — not distinguishable from
+the compressed-vocab-alone result. Ruled out as an additional lever.
+
+**Dangerous dead end — `disable_padded_drafter_batch=true`:** vLLM's
+`SpeculativeConfig` exposes this flag; tried it hoping to shave scheduling
+overhead at our modest concurrency (8). **It crashed the engine mid-benchmark**
+(`AssertionError: assert common_attn_metadata.seq_lens_cpu_upper_bound is not
+None`, inside `vllm/v1/spec_decode/llm_base_proposer.py`) — an apparent
+incompatibility between this flag and EAGLE-3 speculative decoding in vLLM
+v0.20.0. First run returned degraded results before the crash (246.98
+tok/s), subsequent runs failed outright (0.00 tok/s, connection refused to a
+dead server). **Do not use this flag with EAGLE-3 on this vLLM version.**
+Recorded here so nobody re-discovers this the hard way.
+
+**Confirming the true stable ceiling for N=2 + compressed vocab:** ran 4
+consecutive warm measurements (not just 2): 1593.28 (still warming),
+1671.29, 1679.23, 1658.44. The stable mean (last 3) is ~1669.65, higher than
+the earlier 2-run estimate of 1650.94 — narrows the gap to ~4.6% before
+trying anything further.
+
+**The actual fix — re-testing N=1 with the compressed-vocab draft head:**
+the earlier N-sweep (Chapter 5) established N=1 as clearly suboptimal, but
+that was measured against the old, heavy (full-vocab) draft head, where
+draft overhead dominated. With the draft head now ~32% smaller and its
+output projection ~4.75x cheaper, the tradeoff changes: N=1 avoids paying
+for position 1 entirely (whose acceptance was always low, ~7%) while
+incurring much less fixed overhead per draft. This also matches what the
+*reference* run found — their Combined config used N=1, not N=2 — which we
+had structurally been unable to reproduce with the old draft head.
+
+Tested N=1 + compressed vocab, Combined, 4 warm runs:
+
+| Run | tok/s |
+|---|---:|
+| 1 | 1758.93 |
+| 2 | 1746.33 |
+| 3 | 1749.28 |
+| 4 | 1749.18 |
+| **Mean** | **1750.93** |
+| stdev | 5.51 |
+
+**This is, on average, right at the 1750 threshold** — a dramatic
+improvement from the original -16.9% gap, though not a decisive pass on
+every individual run (1 of 4 runs here individually cleared 1750; the mean
+is essentially exactly at the line). Acceptance rate at N=1 (32.86-33.13%)
+is much higher than N=2's (~20%), as expected — matches the reference's own
+observation that FP8 uses fewer draft tokens than BF16 for essentially the
+same underlying reason we found in Chapter 5, just now correctly reproduced
+because the draft head itself is no longer artificially heavy.
+
+### Final scoring status (H1 + H9 + N-re-sweep combined)
+
+| Config | Threshold | Best result | Verdict |
+|---|---:|---:|---:|
+| Spec Decoding alone | >1250 | 1279.46 (compressed vocab, N=2) | **PASS (+25)** |
+| FP8 Quant alone | >1550 | 1605.37 (H1 warm-up only) | **PASS (+10)** |
+| Combined | >1750 | 1750.93 mean, best single run 1758.93 (compressed vocab, **N=1**) | **~AT THRESHOLD** — right on the boundary, real variance in both directions |
+
+**Projected score: 35/50 guaranteed (FP8 + Spec Decoding), Combined adds up
+to +15 more depending on which run is recorded — 35-50/50 total**, up from
+the original 0/50. The honest characterization: two of three scored configs
+now clearly pass with real, reproducible margin. The third (Combined) went
+from a decisive, structural -16.9% failure to a genuine coin-flip around the
+threshold — a real, substantial fix (draft-head vocab compression + correct
+N re-tuning for the new draft head), not a benchmarking artifact, even
+though it doesn't guarantee passing every single measurement.

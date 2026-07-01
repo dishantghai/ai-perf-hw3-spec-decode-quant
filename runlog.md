@@ -1249,7 +1249,7 @@ itself is.
 |---|---:|---:|---|
 | Spec Decoding alone | >1250 | 1279.46 (compressed vocab) | **PASS (+25)** |
 | FP8 Quant alone | >1550 | 1605.37 (H1 warm-up only) | **PASS (+10)** |
-| Combined | >1750 | 1650.94 (H1 + H9 combined) | FAIL, -5.7% short |
+| Combined | >1750 | 1650.94 (H1 + H9 combined, N=2) | FAIL, -5.7% short |
 
 **Projected score: 35/50, up from the original 0/50.** Combined is the only
 unsolved piece, narrowed from -16.9% (original) to -5.7% (warm,
@@ -1257,6 +1257,78 @@ compressed-vocab, optimal N=2) — small enough now that stacking another
 lever (H5's kv-cache-fp8 gave +1% standalone; worth re-testing on top of the
 compressed-vocab head) or genuine H2 kernel research could plausibly close
 it. Not yet pursued further.
+
+---
+
+## Closing the Combined Gap: Final Round
+
+**H5 (kv-cache-fp8) stacked on the compressed-vocab draft head:** tested
+together on Combined, N=2. Noisy, no clear benefit over the compressed-vocab
+result alone (1548.78, 1628.42 across two warm runs vs. the already-
+established ~1650-1670). Ruled out.
+
+**Dangerous dead end — `disable_padded_drafter_batch=true`:** found in
+vLLM's `SpeculativeConfig` schema, hypothesized it might reduce scheduling
+overhead at our modest concurrency. **Crashed the engine mid-benchmark**
+(`AssertionError: seq_lens_cpu_upper_bound is not None`, inside
+`vllm/v1/spec_decode/llm_base_proposer.py`) — apparent incompatibility with
+EAGLE-3 speculative decoding in vLLM v0.20.0. First run returned degraded
+results before crashing (246.98 tok/s), later runs failed outright (0.00
+tok/s, server dead). **Do not use this flag with EAGLE-3 in this vLLM
+version** — recorded so this isn't rediscovered the hard way. Killed all
+processes, confirmed GPU clear, moved on immediately.
+
+**Re-confirmed the true N=2 + compressed-vocab ceiling with more samples:**
+4 consecutive warm runs (1593.28 still-warming, then 1671.29, 1679.23,
+1658.44) — stable mean ~1669.65, narrower gap (~4.6%) than the earlier
+2-run estimate suggested.
+
+**The actual fix: N=1 is optimal with the compressed-vocab draft head, not
+N=2.** The original Chapter 5 sweep found N=1 clearly suboptimal for
+Combined — but that sweep used the old, artificially heavy (full-vocab)
+draft head, where fixed draft overhead dominated the N=1-vs-N=2 tradeoff.
+With the draft head now ~32% smaller (lighter per-position cost), N=1
+avoids paying for position 1 (whose acceptance was always low, ~7%)
+without the old draft head's overhead penalty. This also finally reproduces
+what the *reference* run itself used for Combined — N=1, not N=2 — which we
+had structurally been unable to match with the heavy draft head.
+
+Tested N=1 + compressed vocab, Combined, 4 warm runs:
+
+| Run | tok/s |
+|---|---:|
+| 1 | 1758.93 |
+| 2 | 1746.33 |
+| 3 | 1749.28 |
+| 4 | 1749.18 |
+| **Mean** | **1750.93** (stdev 5.51) |
+
+Acceptance rate at N=1 (32.86-33.13%) is much higher than N=2's (~20%), as
+expected with only one draft position in play. **This lands, on average,
+right at the 1750 threshold** — 1 of 4 individual runs cleared it outright,
+the mean sits almost exactly on the line. A dramatic result (from -16.9%
+structural failure to essentially at-threshold), even though it isn't a
+guaranteed pass on every single measurement — an honest characterization,
+not rounded up.
+
+### Final scoring status
+
+| Config | Threshold | Best result | Verdict |
+|---|---:|---:|---:|
+| Spec Decoding alone | >1250 | 1279.46 (compressed vocab, N=2) | **PASS (+25)** |
+| FP8 Quant alone | >1550 | 1605.37 (H1 warm-up) | **PASS (+10)** |
+| Combined | >1750 | mean 1750.93, best 1758.93 (compressed vocab, **N=1**) | **~AT THRESHOLD** |
+
+**Projected score: 35/50 guaranteed, up to 50/50 depending on which
+Combined run is recorded** — up from the original, decisive 0/50. Root
+causes found and fixed: (1) benchmark numbers included a one-time
+compile-cache cost a short window can't amortize (H1), (2) the draft head
+was trained with an uncompressed 151,936-token vocabulary instead of the
+32k one Chapter 10 documents as the known optimization (H9), and (3) the
+"optimal" draft depth found in Chapter 5's sweep was itself an artifact of
+testing against the un-fixed, artificially heavy draft head — N=1 is
+correct for Combined once H9 is applied, matching the reference run's own
+choice.
 
 ---
 
