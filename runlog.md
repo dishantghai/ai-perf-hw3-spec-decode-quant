@@ -1043,6 +1043,57 @@ here.
 
 ---
 
+## Chapter 8 — Evidence Synthesis
+
+Filled `ch8-final-table` and `ch8-answer` in the notebook with the real,
+complete evidence trail from Chapters 5-7 rather than leaving them as blank
+templates. No new experiments run here — this is pure synthesis of what's
+already in this runlog.
+
+**One addition the user specifically flagged and asked for**: the initial
+fill of `ch8-final-table` only had the homework's 4 required configs
+(Baseline, Spec Decoding, FP8 Quant, FP8+Spec Decoding), with the Chapter 7
+FP8-trained-draft-head result (1462.95 tok/s, 19.77% acceptance) mentioned
+only in `ch8-answer`'s prose. Added it as an explicit 5th row in the table
+(clearly marked as not one of the 4 required configs, to avoid confusing it
+with the homework's actual scoring rubric), since it's real measured
+evidence directly relevant to the table's purpose — supporting the
+order-of-operations conclusion — and burying it in prose-only made the
+evidence table incomplete.
+
+**Final evidence table (all 5 configs, matches the notebook exactly):**
+
+| Config | tok/s | TTFT ms | TPOT ms | Accept% | Speedup |
+|---|---|---|---|---|---|
+| Baseline | 838.74 | 649.07 | 7.03 | N/A | 1.00 |
+| Spec Decoding (C2, N=2) | 1069.82 | 173.27 | 6.43 | 20.25 | 1.28 |
+| FP8 Quant (C3) | 1110.97 | 467.64 | 5.39 | N/A | 1.32 |
+| FP8 + Spec Decoding (C4, N=2, BF16-trained head) | 1468.70 | 53.40 | 5.03 | 20.17 | 1.75 |
+| same, FP8-trained head (Ch7 Experiment 7.1) | 1462.95 | 55.33 | 5.08 | 19.77 | 1.74 |
+
+**Scoring check against the homework's actual thresholds (4 required
+configs only — the 5th row is our own extra investigation, not part of the
+rubric):** 0/50 — every config falls short of the reference run's absolute
+throughput thresholds (1250 / 1550 / 1750 tok/s), despite our baseline
+closely matching the reference's (838.74 vs 841.22) and our relative gains
+being strong (+75.1% combined). Recorded honestly in both the notebook and
+here rather than glossed over; the absolute-throughput gap is a separate,
+environment-level question (server load, scheduling, concurrency-8
+saturation point) that doesn't change any mechanistic conclusion from
+Chapters 5-7 — but it does mean this run would not clear the homework's
+scoring bar as currently measured.
+
+**Final technical report** (full version in `ch8-answer`): quantize first,
+but for the practical (speed) reason confirmed by direct measurement, not
+the acceptance-rate reason the theory predicted and Experiment 7.1
+empirically contradicted (at small, near-noise magnitude) for this specific
+model. The combined config's super-multiplicative gain (+3.6% over the
+multiplicative prediction, +9.4% over additive) is the strongest single
+piece of evidence for combining the two techniques, independent of the
+order-of-operations question.
+
+---
+
 ## Baseline — 2026-06-30 (prior session, kept for reference)
 
 **Model:** `/data/hw3/Qwen3-8B`  
