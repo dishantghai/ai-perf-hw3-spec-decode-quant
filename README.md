@@ -9,19 +9,24 @@ pipeline for `Qwen/Qwen3-8B` on a single H100 80GB GPU:
 - determine, with real measurements rather than assumption, whether quantization or
   draft-head training should happen first.
 
-## Final result
+## Final measured results
 
-| Configuration | Threshold | Result | Verdict |
-| --- | ---: | ---: | --- |
-| Speculative decoding alone | `> 1250 tok/s` | `1279.46` | **PASS** |
-| FP8 dynamic quantization alone | `> 1550 tok/s` | `1611.94` | **PASS** |
-| FP8 + speculative decoding (combined) | `> 1750 tok/s` | mean `1750.93` (best `1758.93`) | **at threshold** |
+| Configuration | Output tok/s |
+| --- | ---: |
+| Baseline | `838.74` |
+| Speculative decoding alone | `1279.46` |
+| FP8 dynamic quantization alone | `1611.94` |
+| FP8 + speculative decoding (combined) | mean `1750.93` (best `1758.93`, 4 warm runs) |
 
-Getting here required two corrections after an initial pass that scored 0/50 against
-these thresholds — a cold `torch.compile`/kernel-cache tax baked into short benchmark
-windows, and a draft head that was accidentally trained with the full 151,936-token
-vocabulary instead of a compressed one. Both are explained in full, with the actual
-measurements, inside the submission notebook itself.
+(The assignment's own scoring rubric and thresholds are stated in
+`spec_dec+quantization_homework_final.ipynb`, Task 4 — scoring against it is left to
+the assessor.)
+
+Getting to these numbers required two corrections after an initial pass whose results
+were substantially lower — a cold `torch.compile`/kernel-cache tax baked into short
+benchmark windows, and a draft head that was accidentally trained with the full
+151,936-token vocabulary instead of a compressed one. Both are explained in full, with
+the actual measurements, inside the submission notebook itself.
 
 ## Where to look
 
@@ -36,7 +41,22 @@ measurements, inside the submission notebook itself.
 | `RUBRIC_GAP_HYPOTHESES.md` | Ranked list of hypotheses investigated to explain the 0/50 first-pass gap (cold-compile tax, draft-vocab size, KV-cache dtype, chunked prefill, thermal drift, etc.), with which were confirmed and which were ruled out. |
 | `EAGLE-3.md` | Reference notes on EAGLE-3 speculative decoding internals (architecture, training-time test, verification). |
 | `Hidden_State_Encodes_Future_Token_Distributions.md` | Reference notes on why a verifier's hidden states carry signal about future tokens, motivating why EAGLE-style draft heads work. |
-| `scripts/` | Shell scripts used on the GPU instance: data prep, hidden-state generation, EAGLE-3 training, and server launch. |
+| `scripts/` | Every script actually run on the GPU instance: data prep, hidden-state generation, EAGLE-3 training (original, compressed-vocab, and FP8-hidden-state variants), FP8 quantization, and server launch. See the table below. |
+| `logs/` | Raw `vllm bench serve` / training output for every run cited in `runlog.md`, `RUBRIC_GAP_HYPOTHESES.md`, and the submission notebook — the underlying evidence, not just the extracted numbers. |
+| `checkpoints_metadata/` | `config.json` / `config.py` / `val_metrics.json` for each of the 3 trained draft-head checkpoints (original, compressed-vocab, FP8-trained). Metadata only — the actual model weights (multi-GB `.safetensors`) are not checked in. |
+
+### `scripts/`
+
+| Script | Purpose |
+| --- | --- |
+| `prepare_data.sh` | Tokenize ShareGPT data for offline EAGLE-3 training. |
+| `generate_hidden_states.sh` | Generate offline hidden states from the BF16 verifier. |
+| `train_eagle3.sh` | Train the original EAGLE-3 draft head (full 151,936-token vocab). |
+| `train_eagle3_compressed_vocab.sh` | Train the corrected draft head with `--draft-vocab-size 32000` — the fix that closed most of the scoring gap. |
+| `quantize_qwen3.py` | FP8 dynamic quantization of the verifier via `llm-compressor` (Task 3). |
+| `launch_server.sh` | Launch the vLLM server for benchmarking. |
+| `generate_hidden_states_fp8.sh`, `launch_server_fp8_hs.sh`, `train_eagle3_fp8.sh` | The Chapter 7 / Experiment 7.1 pipeline: generate hidden states from the *quantized* verifier and train a second draft head on them, to directly test the "train on what you serve" order-of-operations argument. |
+| `inspect_sharegpt.py` | Small utility to preview the ShareGPT dataset. |
 
 ## Pipeline summary
 

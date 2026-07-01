@@ -1,0 +1,29 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights:   0%|          | 1/399 [00:00<02:08,  3.10it/s]Loading weights:   4%|▍         | 17/399 [00:00<00:07, 51.19it/s]Loading weights:  10%|▉         | 39/399 [00:00<00:03, 99.34it/s]Loading weights:  15%|█▌        | 61/399 [00:00<00:02, 130.98it/s]Loading weights:  21%|██        | 83/399 [00:00<00:02, 152.37it/s]Loading weights:  26%|██▋       | 105/399 [00:00<00:01, 166.07it/s]Loading weights:  32%|███▏      | 127/399 [00:00<00:01, 174.57it/s]Loading weights:  37%|███▋      | 149/399 [00:01<00:01, 181.59it/s]Loading weights:  43%|████▎     | 171/399 [00:01<00:01, 184.86it/s]Loading weights:  48%|████▊     | 193/399 [00:01<00:01, 187.17it/s]Loading weights:  54%|█████▎    | 214/399 [00:01<00:00, 186.97it/s]Loading weights:  59%|█████▉    | 237/399 [00:01<00:00, 192.52it/s]Loading weights:  65%|██████▍   | 259/399 [00:01<00:00, 193.49it/s]Loading weights:  70%|███████   | 281/399 [00:01<00:00, 194.48it/s]Loading weights:  76%|███████▌  | 303/399 [00:01<00:00, 195.18it/s]Loading weights:  81%|████████  | 323/399 [00:01<00:00, 191.74it/s]Loading weights:  87%|████████▋ | 347/399 [00:02<00:00, 199.04it/s]Loading weights:  92%|█████████▏| 369/399 [00:02<00:00, 197.81it/s]Loading weights:  98%|█████████▊| 391/399 [00:02<00:00, 199.70it/s]Loading weights: 100%|██████████| 399/399 [00:02<00:00, 170.97it/s]
+Compressing model:   0%|          | 0/252 [00:00<?, ?it/s]Compressing model:   8%|▊         | 20/252 [00:00<00:01, 141.58it/s]Compressing model:  56%|█████▌    | 141/252 [00:00<00:00, 676.92it/s]Compressing model: 100%|██████████| 252/252 [00:00<00:00, 757.41it/s]
+Loading weights:   0%|          | 0/651 [00:00<?, ?it/s]Loading weights:   0%|          | 1/651 [00:00<01:25,  7.58it/s]Loading weights:   0%|          | 2/651 [00:00<01:43,  6.26it/s]Loading weights:  10%|▉         | 62/651 [00:00<00:02, 207.43it/s]Loading weights:  20%|██        | 132/651 [00:00<00:01, 363.84it/s]Loading weights:  31%|███       | 201/651 [00:00<00:00, 459.71it/s]Loading weights:  41%|████      | 264/651 [00:00<00:00, 504.40it/s]Loading weights:  51%|█████     | 332/651 [00:00<00:00, 549.03it/s]Loading weights:  62%|██████▏   | 401/651 [00:00<00:00, 584.93it/s]Loading weights:  73%|███████▎  | 472/651 [00:01<00:00, 613.00it/s]Loading weights:  82%|████████▏ | 536/651 [00:01<00:00, 620.04it/s]Loading weights:  92%|█████████▏| 600/651 [00:01<00:00, 618.83it/s]Loading weights: 100%|██████████| 651/651 [00:01<00:00, 495.10it/s]
+Decompressing model:   0%|          | 0/252 [00:00<?, ?it/s]Decompressing model: 100%|██████████| 252/252 [00:00<00:00, 4750.21it/s]
+
+Prompt: 'The capital of France is'
+  BF16: top1_prob=0.5188  entropy=2.6279  top3=[('Paris', '0.5188'), ('a', '0.1158'), ('in', '0.0426')]
+  FP8: top1_prob=0.5787  entropy=2.4213  top3=[('Paris', '0.5787'), ('a', '0.1006'), ('located', '0.0288')]
+
+Prompt: 'def fibonacci(n):'
+  BF16: top1_prob=0.9703  entropy=0.1933  top3=[('', '0.9703'), ('#', '0.0095'), ('', '0.0084')]
+  FP8: top1_prob=0.9651  entropy=0.2205  top3=[('', '0.9651'), ('#', '0.0121'), ('', '0.0095')]
+
+Prompt: 'In 2024, the most popular programming language was'
+  BF16: top1_prob=0.5532  entropy=2.6550  top3=[('Python', '0.5532'), ('JavaScript', '0.0661'), ('determined', '0.0515')]
+  FP8: top1_prob=0.5293  entropy=2.8024  top3=[('Python', '0.5293'), ('determined', '0.0716'), ('JavaScript', '0.0492')]
+
+=== Summary: BF16 vs FP8 distribution sharpness ===
+Mean top-1 probability: BF16=0.6808  FP8=0.6910  delta=+0.0103
+Mean entropy (nats):    BF16=1.8254  FP8=1.8147  delta=-0.0107
+(Lower entropy / higher top-1 prob = sharper/more peaky distribution)
+
+=== Top-1 token agreement (does FP8 pick the same top token as BF16?) ===
+  'The capital of France is': BF16=' Paris' FP8=' Paris' -> SAME
+  'def fibonacci(n):': BF16='
+' FP8='
+' -> SAME
+  'In 2024, the most popular programming language was': BF16=' Python' FP8=' Python' -> SAME
