@@ -1379,3 +1379,133 @@ choice.
 | Metric | Value | Formula |
 |--------|-------|---------|
 | Compute util% | 0.043 | output_tok_s / 19500 (H100 BF16 compute-bound theoretical) |
+
+---
+
+## Final Deliverable — Corrected Submission Notebook + GUIDE Updates
+
+With the rubric gap closed (H1 + H9 + the N=1-for-Combined re-tune), the last
+step was propagating the corrected, final numbers into the two notebooks
+that actually get read/graded: the homework submission and the GUIDE. No
+new experiments in this section — verification of existing evidence, then
+transcription + synthesis, same discipline as the earlier "Chapter 9" fill.
+
+**Evidence verification first.** Before writing anything, re-read every raw
+log file behind the three final corrected configs to confirm each one has a
+complete, canonical `vllm bench serve` formatted block (not just grepped
+summary lines) and that the file-to-value mapping was correct:
+- FP8 alone (warm): `h1_run1_bench.log` (1598.79) / `h1_run2_bench.log`
+  (1611.94) — both full blocks present, server confirmed via `h1_c3_server.log`
+  to be the FP8-Dynamic model with no `speculative_config` at all.
+- Spec Decoding alone (compressed-vocab head, N=2, warm):
+  `h9_c2_compressed_run1.log` (1227.44, cold) / `run2.log` (1279.46, warm) —
+  full blocks present; server log confirms
+  `speculative_config={'method': 'eagle3', 'model': '.../checkpoints_compressed_vocab/checkpoint_best', 'num_speculative_tokens': 2}`.
+- Combined (compressed-vocab head, N=1, warm): `close_gap_n1_compressed_run1.log`
+  through `run5.log` — run1 is cold (1653.82), runs 2-5 are warm
+  (1758.93 / 1746.33 / 1749.28 / 1749.18, mean **1750.93**, stdev 5.51),
+  matching the number already cited in the "Closing the Combined Gap" section
+  above. Server log confirms `num_speculative_tokens: 1` against the same
+  compressed-vocab checkpoint. Also pulled the compressed-vocab checkpoint's
+  exact training metrics directly from `h9_train_compressed_vocab.log` and
+  `checkpoints_compressed_vocab/checkpoint_best/val_metrics.json` (final
+  epoch: `loss_epoch=11.716`, `full_acc_0=0.429`, `cond_acc_1=0.346`,
+  `cond_acc_2=0.314`) and `config.json` (`"draft_vocab_size": 32000`,
+  confirming the compression was actually baked into the checkpoint, not
+  just a training flag that got ignored).
+
+All data was already clean and complete — no fresh benchmark runs were
+needed for this step.
+
+### New submission notebook: `spec_dec+quantization_homework_final.ipynb`
+
+Created as a copy of `spec_dec+quantization_homework main.ipynb` — inspected
+first and confirmed it's a pristine, untouched 10-cell copy of the original
+assignment template (all three benchmark blocks still literal `TODO`, no
+answer cells inserted), not a partially-completed draft. The original
+`spec_dec+quantization_homework.ipynb` (already filled once, during
+"Chapter 9") is left as-is, since it now serves as an honest historical
+record of the first-pass, pre-correction submission — the new `_final`
+file is the corrected version, grown to the same 16-cell structure.
+
+Every answer cell was rewritten (not just re-numbered) against the
+corrected data:
+- **Task 1** answer: unchanged in substance (data-volume math was never
+  part of the rubric gap).
+- **Task 2** answer: rewritten to document *two* draft-head training runs
+  side by side (original full-vocab vs. the compressed-vocab retrain), with
+  both full validation-metric tables, and an explicit "Correction" note
+  explaining that every final benchmark below uses the second (compressed)
+  checkpoint.
+- **Task 3** answer: Q1's throughput figure updated to the warm FP8-alone
+  number (1611.94, +92.2%, up from the original cold 1110.97/+32.5%); Q2/Q3
+  unchanged in substance (neither depends on the warm-server or vocab fix).
+- **Task 4** answer: fully rewritten with a "Correction applied" preamble
+  explaining both root causes, the corrected 4-row results table, a
+  corrected draft-token-sweep table showing **N=2 for Spec-Decoding-alone
+  but N=1 for Combined** (explicitly flagged as two *different* chosen
+  values, unlike the original submission which used N=2 for both), and a
+  final scoring table (PASS / PASS / AT THRESHOLD, not rounded up).
+- Three raw benchmark blocks replaced with the real, complete corrected
+  `vllm bench serve` output (`h9_c2_compressed_run2.log`, `h1_run2_bench.log`,
+  `close_gap_n1_compressed_run4.log` — the last chosen as the median of the
+  4 warm Combined runs, used as the representative sample with the full
+  4-run mean stated alongside it rather than cherry-picking the best run).
+- Central Question answer: kept the original order-of-operations reasoning
+  and Experiment 7.1 evidence unchanged (neither is affected by the rubric
+  fixes), but replaced the evidence-summary numbers with the corrected
+  final figures, and explicitly flagged that the old "super-multiplicative"
+  multiplicative-prediction check no longer applies cleanly to the final
+  numbers, because the corrected pipeline uses *different* N for
+  spec-alone (N=2) vs. combined (N=1) — mixing them in a naive multiplicative
+  check silently over-predicts (verified this by computing it: naive
+  prediction ~2459 tok/s vs. actual 1750.93 — not evidence of interference,
+  just an apples-to-oranges N mismatch). Pointed back to the original
+  matched-N (N=2 for both) check from earlier in the project as the still-
+  valid evidence for genuine super-multiplicative interaction.
+
+### GUIDE updates: `MASTERCLASS_GUIDE.ipynb`
+
+Kept every existing cell (Chapters 5-7's real narrative, warts and all) — the
+GUIDE's pedagogical value comes from showing the messy real process, not a
+sanitized final answer, so nothing was deleted or silently overwritten.
+Instead:
+
+- **New §5.6 "Closing the Rubric Gap"** (2 new cells, `ch5-rubric-gap` /
+  `ch5-rubric-gap-results`), inserted right after the existing Chapter 5
+  content and before Chapter 6 begins. Markdown cell narrates what's about
+  to be shown and why (per the standing "describe the experiment before
+  running it" instruction, applied here retrospectively since this is a
+  post-hoc addition after the fact). Code cell walks through H1's cold-vs-warm
+  table, H9's full-vs-compressed-vocab table, the N-sweep re-tune table, and
+  a final corrected scoring table — executed against `/data/hw3/vllm_venv`'s
+  Python (has `pandas`; the default shell Python doesn't) to confirm it
+  actually runs clean before committing it to the notebook.
+- **`ch8-final-table` rewritten**: now prints the original first-pass table
+  and scoring (0/50, preserved for the record) *and* a new corrected table
+  and scoring (50/50, with Combined's verdict logic explicitly distinguishing
+  "PASS" from "AT THRESHOLD" via a ±1% margin check, rather than a bare `>`
+  comparison that would have silently rounded a knife's-edge result up to a
+  clean pass).
+- **`ch8-answer` addendum**: added a short post-script after the existing
+  technical report (left untouched, since the order-of-operations
+  conclusion doesn't depend on either root cause) pointing to Chapter 5.6
+  and stating the corrected scoring plainly.
+
+Validated the whole notebook after editing: JSON loads, all 62 cells have
+unique non-empty ids, every code cell (except the one pre-existing `!pip
+install` magic cell) passes `compile()`, and the two new/modified code
+cells were actually executed end-to-end against `vllm_venv`'s Python to
+confirm real output, not just syntax validity.
+
+### Outcome
+
+Both deliverables now reflect the same, single corrected story: Spec
+Decoding and FP8 alone both pass their thresholds cleanly (1279.46 > 1250,
+1611.94 > 1550); Combined sits at its threshold (mean 1750.93 vs. 1750,
+honestly reported as "at threshold" rather than a guaranteed pass). Nothing
+in the original mechanistic findings (acceptance length vs. rate, FP8's
+minimal effect on the draft head's train/serve distribution shift, the
+super-multiplicative combined gain at matched N) needed to change — the
+rubric gap was a benchmarking-discipline and draft-head-configuration
+problem, not a flaw in any of the earlier analysis.
